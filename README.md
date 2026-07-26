@@ -53,6 +53,15 @@
   --timezone Asia/Shanghai
 ```
 
+在 Macos 中：
+
+```powershell
+python scripts/soc_report.py \
+  --input examples/alerts.json \
+  --output-dir reports/latest \
+  --timezone Asia/Shanghai
+```
+
 如果没有项目虚拟环境，也可以使用系统 Python：
 
 ```powershell

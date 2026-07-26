@@ -817,16 +817,6 @@ def write_report_bundle(
             "recommendation",
         ],
     )
-    emit_csv(
-        "alert_timeline.csv",
-        result.timeline,
-        [
-            "period_start",
-            "alert_count",
-            "high_or_critical_count",
-            "credential_attack_count",
-        ],
-    )
 
     summary_path = output_dir / "report_summary.json"
     write_json(
