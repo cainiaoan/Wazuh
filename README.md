@@ -19,7 +19,7 @@
 - 输出优先处置队列、事件时间线、身份与特权审计、Agent 健康、资产画像和 MITRE 覆盖。
 - 对 HTML 内容转义，对 CSV 单元格进行 Excel 公式注入防护。
 - 使用临时文件和原子替换发布报告，降低输出中断导致新旧文件混合的风险。
-- 仅依赖 Python 标准库，适合直接部署到 Wazuh Manager。
+- 报告生成器运行时仅依赖 Python 标准库，适合直接部署到 Wazuh Manager。
 
 ## 项目结构
 
@@ -31,6 +31,8 @@
 │   └── latest/                      默认报告输出目录
 ├── rules/
 │   └── local_rules.xml              Wazuh 自定义检测规则
+├── pytest.ini                       pytest 测试发现和源码路径配置
+├── requirements-dev.txt             测试开发依赖
 ├── scripts/
 │   ├── soc_report.py                兼容的命令行入口
 │   └── soc_reporting/
@@ -39,7 +41,7 @@
 │       ├── pipeline.py              解析、归一化、评分、关联和聚合
 │       └── reporting.py             安全 CSV/JSON 输出和 HTML 渲染
 └── tests/
-    └── test_soc_reporting.py        标准库 unittest 回归测试
+    └── test_soc_reporting.py        pytest 回归测试
 ```
 
 ## 快速生成报告
@@ -171,8 +173,16 @@ Low      / 低危：0-39
 
 ## 运行测试
 
-```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+先安装测试依赖：
+
+```bash
+python3 -m pip install -r requirements-dev.txt
+```
+
+然后运行完整测试：
+
+```bash
+python3 -m pytest
 ```
 
 回归测试覆盖来源 IP 误归因、规则 `2502` 分类、sudo 用户角色、脏用户名、

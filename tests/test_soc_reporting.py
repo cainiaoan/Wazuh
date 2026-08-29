@@ -3,23 +3,19 @@ from __future__ import annotations
 import csv
 import gzip
 import json
-import sys
-import tempfile
-import unittest
 from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
-from soc_reporting.models import ParseStats  # noqa: E402
-from soc_reporting.pipeline import (  # noqa: E402
+from soc_reporting.models import ParseStats
+from soc_reporting.pipeline import (
     analyze,
     classify_alert,
     load_and_normalize,
     normalize_alert,
 )
-from soc_reporting.reporting import render_html_report, write_csv  # noqa: E402
+from soc_reporting.reporting import render_html_report, write_csv
 
 
 def raw_alert(
@@ -57,7 +53,7 @@ def raw_alert(
     }
 
 
-class NormalizationTests(unittest.TestCase):
+class TestNormalization:
     def test_agent_ip_is_not_used_as_source_ip(self) -> None:
         raw = raw_alert(
             rule_id="503",
@@ -68,9 +64,9 @@ class NormalizationTests(unittest.TestCase):
             full_log="ossec: Agent started.",
         )
         alert = normalize_alert(1, raw, ParseStats())
-        self.assertEqual(alert.source_ip, "-")
-        self.assertEqual(alert.source_confidence, "Unknown")
-        self.assertEqual(alert.destination_ip, "192.168.38.135")
+        assert alert.source_ip == "-"
+        assert alert.source_confidence == "Unknown"
+        assert alert.destination_ip == "192.168.38.135"
 
     def test_exact_high_value_rules_are_classified(self) -> None:
         alert_type, category, outcome, confidence, reason = classify_alert(
@@ -79,11 +75,11 @@ class NormalizationTests(unittest.TestCase):
             "User missed the password more than one time",
             "PAM authentication failures",
         )
-        self.assertEqual(alert_type, "SSH Brute Force")
-        self.assertEqual(category, "Credential Attack")
-        self.assertEqual(outcome, "failure")
-        self.assertEqual(confidence, "High")
-        self.assertIn("2502", reason)
+        assert alert_type == "SSH Brute Force"
+        assert category == "Credential Attack"
+        assert outcome == "failure"
+        assert confidence == "High"
+        assert "2502" in reason
 
     def test_web_brute_force_is_not_misclassified_as_ssh(self) -> None:
         result = classify_alert(
@@ -92,8 +88,8 @@ class NormalizationTests(unittest.TestCase):
             "web directory brute force",
             'GET /admin HTTP/1.1" 404',
         )
-        self.assertEqual(result[0], "Web Directory Brute Force")
-        self.assertEqual(result[1], "Reconnaissance")
+        assert result[0] == "Web Directory Brute Force"
+        assert result[1] == "Reconnaissance"
 
     def test_sudo_actor_target_and_command_are_separate(self) -> None:
         raw = raw_alert(
@@ -112,10 +108,10 @@ class NormalizationTests(unittest.TestCase):
             ),
         )
         alert = normalize_alert(1, raw, ParseStats())
-        self.assertEqual(alert.actor_user, "kalilinux")
-        self.assertEqual(alert.target_user, "root")
-        self.assertEqual(alert.username, "kalilinux")
-        self.assertEqual(alert.command, "/usr/bin/id")
+        assert alert.actor_user == "kalilinux"
+        assert alert.target_user == "root"
+        assert alert.username == "kalilinux"
+        assert alert.command == "/usr/bin/id"
 
     def test_decoder_artifact_by_is_not_a_username(self) -> None:
         raw = raw_alert(
@@ -126,10 +122,10 @@ class NormalizationTests(unittest.TestCase):
             full_log="Connection reset by 192.168.38.1 port 49866 [preauth]",
         )
         alert = normalize_alert(1, raw, ParseStats())
-        self.assertEqual(alert.target_user, "-")
+        assert alert.target_user == "-"
 
 
-class CorrelationTests(unittest.TestCase):
+class TestCorrelation:
     def test_failure_followed_by_success_is_critical_incident(self) -> None:
         stats = ParseStats()
         failure = normalize_alert(
@@ -165,44 +161,50 @@ class CorrelationTests(unittest.TestCase):
             for incident in result.incidents
             if incident.event_category == "Suspected Compromise"
         )
-        self.assertEqual(compromise.risk_level, "Critical")
-        self.assertGreaterEqual(compromise.risk_score, 95)
-        self.assertEqual(compromise.event_count, 2)
+        assert compromise.risk_level == "Critical"
+        assert compromise.risk_score >= 95
+        assert compromise.event_count == 2
 
 
-class InputAndOutputTests(unittest.TestCase):
-    def test_malformed_and_duplicate_records_are_counted(self) -> None:
+class TestInputAndOutput:
+    def test_malformed_and_duplicate_records_are_counted(
+        self,
+        tmp_path: Path,
+    ) -> None:
         record = raw_alert(event_id="same")
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "alerts.json"
-            path.write_text(
-                "\n".join(
-                    [
-                        json.dumps(record),
-                        json.dumps(record),
-                        "{not-json",
-                        json.dumps(["not", "an", "object"]),
-                    ]
-                ),
-                encoding="utf-8",
-            )
-            stats = ParseStats()
-            alerts = load_and_normalize(path, stats)
-        self.assertEqual(len(alerts), 1)
-        self.assertEqual(stats.parsed_records, 2)
-        self.assertEqual(stats.duplicate_records, 1)
-        self.assertEqual(stats.malformed_json, 1)
-        self.assertEqual(stats.non_object_records, 1)
+        path = tmp_path / "alerts.json"
+        path.write_text(
+            "\n".join(
+                [
+                    json.dumps(record),
+                    json.dumps(record),
+                    "{not-json",
+                    json.dumps(["not", "an", "object"]),
+                ]
+            ),
+            encoding="utf-8",
+        )
+        stats = ParseStats()
+        alerts = load_and_normalize(path, stats)
 
-    def test_csv_formula_injection_is_neutralized(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "report.csv"
-            write_csv(path, [{"value": "=cmd|' /C calc'!A0"}], ["value"])
-            with path.open(encoding="utf-8-sig", newline="") as handle:
-                row = next(csv.DictReader(handle))
-        self.assertTrue(row["value"].startswith("'="))
+        assert len(alerts) == 1
+        assert stats.parsed_records == 2
+        assert stats.duplicate_records == 1
+        assert stats.malformed_json == 1
+        assert stats.non_object_records == 1
 
-    def test_gzip_input_and_soc_filter_keep_bruteforce(self) -> None:
+    def test_csv_formula_injection_is_neutralized(self, tmp_path: Path) -> None:
+        path = tmp_path / "report.csv"
+        write_csv(path, [{"value": "=cmd|' /C calc'!A0"}], ["value"])
+        with path.open(encoding="utf-8-sig", newline="") as handle:
+            row = next(csv.DictReader(handle))
+
+        assert row["value"].startswith("'=")
+
+    def test_gzip_input_and_soc_filter_keep_bruteforce(
+        self,
+        tmp_path: Path,
+    ) -> None:
         record = raw_alert(
             event_id="gzip-1",
             rule_id="2502",
@@ -211,15 +213,15 @@ class InputAndOutputTests(unittest.TestCase):
             data={"srcip": "192.168.38.1", "dstuser": "root"},
             full_log="PAM failures rhost=192.168.38.1 user=root",
         )
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "alerts.json.gz"
-            with gzip.open(path, "wt", encoding="utf-8") as handle:
-                handle.write(json.dumps(record) + "\n")
-            stats = ParseStats()
-            alerts = load_and_normalize(path, stats, soc_only=True)
-        self.assertEqual(len(alerts), 1)
-        self.assertEqual(alerts[0].alert_type, "SSH Brute Force")
-        self.assertEqual(stats.filtered_by_scope, 0)
+        path = tmp_path / "alerts.json.gz"
+        with gzip.open(path, "wt", encoding="utf-8") as handle:
+            handle.write(json.dumps(record) + "\n")
+        stats = ParseStats()
+        alerts = load_and_normalize(path, stats, soc_only=True)
+
+        assert len(alerts) == 1
+        assert alerts[0].alert_type == "SSH Brute Force"
+        assert stats.filtered_by_scope == 0
 
     def test_html_escapes_untrusted_log_content(self) -> None:
         raw = raw_alert(full_log="<script>alert('x')</script> from 192.168.38.1")
@@ -237,11 +239,11 @@ class InputAndOutputTests(unittest.TestCase):
                 "filters": {},
             },
         )
-        self.assertNotIn("<script>alert", report)
-        self.assertIn("&lt;script&gt;", report)
+        assert "<script>alert" not in report
+        assert "&lt;script&gt;" in report
 
 
-class SampleAcceptanceTests(unittest.TestCase):
+class TestSampleAcceptance:
     def test_real_sample_operational_metrics(self) -> None:
         stats = ParseStats()
         alerts = load_and_normalize(
@@ -250,30 +252,25 @@ class SampleAcceptanceTests(unittest.TestCase):
         )
         result = analyze(alerts, incident_window_minutes=10)
 
-        self.assertEqual(stats.total_lines, 108)
-        self.assertEqual(stats.parsed_records, 108)
-        self.assertEqual(stats.malformed_json, 0)
-        self.assertEqual(stats.duplicate_records, 0)
-        self.assertEqual(result.metrics["source_ip_count"], 1)
-        self.assertEqual(result.metrics["unknown_source_alerts"], 86)
-        self.assertEqual(result.metrics["mitre_mapped_alerts"], 70)
-        self.assertEqual(result.metrics["mitre_unmapped_alerts"], 38)
-        self.assertEqual(result.incidents[0].event_category, "Suspected Compromise")
-        self.assertEqual(result.incidents[0].risk_level, "Critical")
-        self.assertEqual(result.incidents[0].target_users, "root")
+        assert stats.total_lines == 108
+        assert stats.parsed_records == 108
+        assert stats.malformed_json == 0
+        assert stats.duplicate_records == 0
+        assert result.metrics["source_ip_count"] == 1
+        assert result.metrics["unknown_source_alerts"] == 86
+        assert result.metrics["mitre_mapped_alerts"] == 70
+        assert result.metrics["mitre_unmapped_alerts"] == 38
+        assert result.incidents[0].event_category == "Suspected Compromise"
+        assert result.incidents[0].risk_level == "Critical"
+        assert result.incidents[0].target_users == "root"
         agent_health = next(
             incident
             for incident in result.incidents
             if incident.event_category == "Agent Visibility"
         )
-        self.assertIn("3 个恢复周期", agent_health.summary)
-        self.assertNotIn(
-            "192.168.38.135",
-            {row["source_ip"] for row in result.by_source},
-        )
+        assert "3 个恢复周期" in agent_health.summary
+        assert "192.168.38.135" not in {
+            row["source_ip"] for row in result.by_source
+        }
         sudo = next(alert for alert in alerts if alert.rule_id == "5402")
-        self.assertEqual((sudo.actor_user, sudo.target_user), ("kalilinux", "root"))
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert (sudo.actor_user, sudo.target_user) == ("kalilinux", "root")
