@@ -55,6 +55,20 @@ CATEGORY_ZH = {
     "Other Security Event": "其他事件",
 }
 
+REPORT_FILENAMES = (
+    "cleaned_alerts.csv",
+    "incidents.csv",
+    "summary_by_source_ip.csv",
+    "summary_by_alert_type.csv",
+    "summary_by_asset.csv",
+    "summary_by_rule.csv",
+    "mitre_attack_summary.csv",
+    "response_recommendations.csv",
+    "alert_timeline.csv",
+    "report_summary.json",
+    "security_operations_report.html",
+)
+
 COLUMN_LABELS = {
     "incident_id": "事件编号",
     "title": "事件",
@@ -73,6 +87,7 @@ COLUMN_LABELS = {
     "source_confidence": "来源置信度",
     "affected_asset": "受影响资产",
     "agent_id": "Agent ID",
+    "manager_name": "Manager",
     "agent_ip": "资产 IP",
     "alert_count": "告警数",
     "incident_count": "事件数",
@@ -108,8 +123,10 @@ def _excel_safe(value: Any) -> Any:
 
     if not isinstance(value, str):
         return value
-    stripped = value.lstrip()
-    if len(stripped) > 1 and stripped.startswith(("=", "+", "-", "@", "\t", "\r")):
+    # Strip whitespace plus common invisible prefixes only for detection. The
+    # apostrophe is prepended to the original value so no evidence is discarded.
+    stripped = value.lstrip(" \t\r\n\v\f\ufeff\u200b\u2060")
+    if stripped != "-" and stripped.startswith(("=", "+", "-", "@")):
         return f"'{value}"
     return value
 
@@ -303,6 +320,7 @@ def _incident_cards(result: AnalysisResult, limit: int = 12) -> str:
               <div class="detail-grid">
                 <div class="detail-row"><span>来源</span><strong>{_escape(source)}</strong></div>
                 <div class="detail-row"><span>资产</span><strong>{_escape(incident.affected_asset)}</strong></div>
+                <div class="detail-row"><span>Manager</span><strong>{_escape(incident.manager_name)}</strong></div>
                 <div class="detail-row"><span>账户</span><strong>{_escape(identities)}</strong></div>
                 <div class="detail-row"><span>规则</span><code>{_escape(incident.rule_ids)}</code></div>
                 <div class="detail-row"><span>时间</span><strong>{_escape(incident.first_seen)} → {_escape(incident.last_seen)}</strong></div>
@@ -403,9 +421,25 @@ def _metric_card(value: Any, label: str, hint: str = "", css: str = "") -> str:
 def _data_quality(stats: ParseStats, result: AnalysisResult) -> str:
     rows = [
         {"metric": "读取物理行", "value": stats.total_lines, "note": "输入文件实际读取行数"},
+        {"metric": "读取字节", "value": stats.input_bytes, "note": "压缩文件按解压后字节统计"},
+        {
+            "metric": "达到行数上限",
+            "value": "是" if stats.line_limit_reached else "否",
+            "note": "为“是”时报告仅覆盖输入前缀",
+        },
         {"metric": "有效 JSON 对象", "value": stats.parsed_records, "note": f"解析成功率 {stats.parse_success_rate:.2f}%"},
         {"metric": "损坏 JSON", "value": stats.malformed_json, "note": f"样例行号：{stats.malformed_line_samples or '-'}"},
         {"metric": "非对象 JSON", "value": stats.non_object_records, "note": "数组或标量不会作为告警处理"},
+        {
+            "metric": "超长输入行",
+            "value": stats.oversized_lines,
+            "note": f"超过 --max-line-bytes；样例行号：{stats.oversized_line_samples or '-'}",
+        },
+        {
+            "metric": "编码错误",
+            "value": stats.encoding_errors,
+            "note": f"非 UTF-8 输入已拒绝；样例行号：{stats.encoding_error_samples or '-'}",
+        },
         {"metric": "重复事件 ID", "value": stats.duplicate_records, "note": "重复记录已排除"},
         {"metric": "无效时间戳", "value": stats.invalid_timestamps, "note": "使用时间筛选时会被排除"},
         {"metric": "等级过滤", "value": stats.filtered_by_level, "note": "低于 --min-level"},
@@ -436,9 +470,13 @@ def render_html_report(
     filters = context.get("filters", {})
     filter_text = (
         f"最低规则等级 {filters.get('min_level', 0)}；"
+        f"读取行上限 {filters.get('line_limit') or '不限'}；"
+        f"单行字节上限 {filters.get('max_line_bytes') or '不限'}；"
+        f"输入总字节上限 {filters.get('max_input_bytes') or '不限'}；"
         f"起始 {filters.get('since') or '不限'}；"
         f"结束 {filters.get('until') or '不限'}；"
-        f"SOC 聚焦 {'是' if filters.get('soc_only') else '否'}"
+        f"SOC 聚焦 {'是' if filters.get('soc_only') else '否'}；"
+        f"严格模式 {'是' if filters.get('strict') else '否'}"
     )
 
     privilege_rows = [
@@ -481,6 +519,8 @@ def render_html_report(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
   <title>{_escape(context['title'])}</title>
   <style>
     :root {{
@@ -620,7 +660,7 @@ def render_html_report(
       <h2>身份认证与特权活动</h2>
       <div class="panel" style="margin-bottom:18px">
         <h3>认证攻击与成功登录时间线</h3>
-        <p class="method-note">同一来源在认证失败后成功登录会升级为“疑似凭据攻陷”，但仍需人工确认授权背景。</p>
+        <p class="method-note">满足失败链阈值后，仅将同 Manager、Agent、资产、来源和账户的窗口内成功登录升级为“疑似凭据攻陷”；仍需人工确认授权背景。</p>
         {render_table(authentication_rows, ['timestamp','affected_asset','source_ip','target_user','alert_type','rule_id','rule_level','risk_level'], limit=30)}
       </div>
       <div class="panel">
@@ -639,7 +679,7 @@ def render_html_report(
         </div>
         <div>
           <h3 style="margin-bottom:10px">受影响资产</h3>
-          {render_table(result.by_asset, ['affected_asset','agent_id','agent_ip','alert_count','incident_count','max_risk_level','top_alert_types'], limit=15)}
+          {render_table(result.by_asset, ['affected_asset','manager_name','agent_id','agent_ip','alert_count','incident_count','max_risk_level','top_alert_types'], limit=15)}
         </div>
       </div>
       <div class="panel" style="margin-top:18px">
@@ -695,7 +735,24 @@ def write_report_bundle(
 ) -> list[Path]:
     if output_dir.exists() and output_dir.is_symlink():
         raise ValueError(f"Refusing to write to a symbolic-link directory: {output_dir}")
+    output_exists = output_dir.exists()
     output_dir.mkdir(parents=True, exist_ok=True)
+    if not output_exists:
+        try:
+            output_dir.chmod(0o700)
+        except OSError:
+            pass
+
+    invalid_targets = [
+        name
+        for name in REPORT_FILENAMES
+        if (output_dir / name).exists()
+        and (output_dir / name).is_dir()
+    ]
+    if invalid_targets:
+        raise ValueError(
+            "Report targets must not be directories: " + ", ".join(invalid_targets)
+        )
 
     written: list[Path] = []
 
@@ -759,6 +816,7 @@ def write_report_bundle(
         result.by_asset,
         [
             "affected_asset",
+            "manager_name",
             "agent_id",
             "agent_ip",
             "alert_count",
@@ -815,6 +873,16 @@ def write_report_bundle(
             "event_category",
             "event_count",
             "recommendation",
+        ],
+    )
+    emit_csv(
+        "alert_timeline.csv",
+        result.timeline,
+        [
+            "period_start",
+            "alert_count",
+            "high_or_critical_count",
+            "credential_attack_count",
         ],
     )
 

@@ -64,6 +64,7 @@ INCIDENT_EXPORT_FIELDS = [
     "source_scope",
     "affected_asset",
     "agent_id",
+    "manager_name",
     "alert_types",
     "rule_ids",
     "actor_users",
@@ -81,10 +82,14 @@ class ParseStats:
     """Input and filtering counters used for data-quality reporting."""
 
     total_lines: int = 0
+    input_bytes: int = 0
+    line_limit_reached: bool = False
     parsed_records: int = 0
     blank_lines: int = 0
     malformed_json: int = 0
     non_object_records: int = 0
+    oversized_lines: int = 0
+    encoding_errors: int = 0
     invalid_timestamps: int = 0
     duplicate_records: int = 0
     filtered_by_level: int = 0
@@ -92,10 +97,17 @@ class ParseStats:
     filtered_by_scope: int = 0
     included_alerts: int = 0
     malformed_line_samples: list[int] = field(default_factory=list)
+    oversized_line_samples: list[int] = field(default_factory=list)
+    encoding_error_samples: list[int] = field(default_factory=list)
 
     @property
     def rejected_records(self) -> int:
-        return self.malformed_json + self.non_object_records
+        return (
+            self.malformed_json
+            + self.non_object_records
+            + self.oversized_lines
+            + self.encoding_errors
+        )
 
     @property
     def parse_success_rate(self) -> float:
@@ -177,6 +189,7 @@ class Incident:
     source_scope: str
     affected_asset: str
     agent_id: str
+    manager_name: str
     alert_types: str
     rule_ids: str
     actor_users: str
